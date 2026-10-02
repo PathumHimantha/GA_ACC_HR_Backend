@@ -28,7 +28,7 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          source: "src,package.json,package-lock.json,.env"
+          source: "src,package.json,package-lock.json,server.js,ecosystem.config.js,.env"
           target: "/var/www/ACCHR/Backend"
           overwrite: true
 
