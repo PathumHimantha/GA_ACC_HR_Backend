@@ -139,17 +139,10 @@ exports.calculateAndSaveLoan = async (data) => {
   }
 
   // ── Calculations ─────────────────────────────────────────────
-  // Interest calculation: 30% of principal over the period
-  // Example: 10,000 loan → 13,000 total over 13 weeks → 1,000 per week
   const interestRate = 0.3; // 30% total interest
   const totalInterest = round2(principal * interestRate);
   const totalPayable = round2(principal + totalInterest);
-
-  // Weekly payment: 10% of principal (for 13 weeks = 30% interest)
-  // For period p: weekly = totalPayable / period
   const weeklyPayment = round2(totalPayable / period);
-
-  // Weekly capital and interest breakdown
   const weeklyCapital = round2(principal / period);
   const weeklyInterest = round2(totalInterest / period);
 
@@ -162,12 +155,8 @@ exports.calculateAndSaveLoan = async (data) => {
     `Calculating loan: ${loan_code} | Principal: ${principal} | Total: ${totalPayable} | Weekly: ${weeklyPayment} | Period: ${period}`,
   );
 
-  // ── Get database connection for transaction ──────────────────
-  const connection = await mainDb.getConnection();
-
-  try {
-    await connection.beginTransaction();
-
+  // ── Use transaction() wrapper instead of getConnection() ────
+  const result = await mainDb.transaction(async (conn) => {
     // ── STEP 1: Insert into loans table ────────────────────────
     const loanInsertQuery = `
       INSERT INTO loans (
@@ -185,7 +174,7 @@ exports.calculateAndSaveLoan = async (data) => {
         loan_period = VALUES(loan_period)
     `;
 
-    await connection.query(loanInsertQuery, [
+    await conn.query(loanInsertQuery, [
       bcode,
       ccode,
       ex_name,
@@ -200,7 +189,7 @@ exports.calculateAndSaveLoan = async (data) => {
     logger.info(`Loan record inserted: ${loan_code}`);
 
     // ── STEP 2: Delete existing interest records for this loan ─
-    await connection.query("DELETE FROM loan_interest WHERE loan_code = ?", [
+    await conn.query("DELETE FROM loan_interest WHERE loan_code = ?", [
       loan_code,
     ]);
 
@@ -217,7 +206,6 @@ exports.calculateAndSaveLoan = async (data) => {
     let cumulativeInterest = 0;
 
     for (let week = 1; week <= period; week++) {
-      // Calculate this week's capital and interest
       let weekCapital = round2(principal / period);
       let weekInterest = round2(totalInterest / period);
 
@@ -233,7 +221,7 @@ exports.calculateAndSaveLoan = async (data) => {
       const weekPaymentAmount = round2(weekCapital + weekInterest);
       const weekDueDate = formatDate(addWeeks(loan_date, week));
 
-      const values = [
+      await conn.query(interestInsertQuery, [
         bcode,
         ccode,
         ex_name,
@@ -243,11 +231,9 @@ exports.calculateAndSaveLoan = async (data) => {
         weekPaymentAmount,
         weekCapital,
         weekInterest,
-        0.0, // payments initially 0
+        0.0,
         weekDueDate,
-      ];
-
-      await connection.query(interestInsertQuery, values);
+      ]);
 
       weeklyRecords.push({
         week_no: week,
@@ -262,41 +248,51 @@ exports.calculateAndSaveLoan = async (data) => {
       `Inserted ${weeklyRecords.length} weekly interest records for loan: ${loan_code}`,
     );
 
-    await connection.commit();
-
     return {
-      success: true,
-      message: "Loan and interest schedule created successfully",
-      data: {
-        loan: {
-          bcode,
-          ccode,
-          ex_name,
-          customer_code,
-          loan_code,
-          loan_amount: principal,
-          loan_date: formattedLoanDate,
-          due_date: formattedDueDate,
-          loan_period: period,
-        },
-        calculation: {
-          principal,
-          total_interest: totalInterest,
-          total_payable: totalPayable,
-          weekly_payment: weeklyPayment,
-          weekly_capital: weeklyCapital,
-          weekly_interest: weeklyInterest,
-        },
-        schedule: weeklyRecords,
-      },
+      bcode,
+      ccode,
+      ex_name,
+      customer_code,
+      loan_code,
+      principal,
+      formattedLoanDate,
+      formattedDueDate,
+      period,
+      totalInterest,
+      totalPayable,
+      weeklyPayment,
+      weeklyCapital,
+      weeklyInterest,
+      weeklyRecords,
     };
-  } catch (error) {
-    await connection.rollback();
-    logger.error(`Error saving loan ${loan_code}:`, error);
-    throw new Error(`Failed to save loan: ${error.message}`);
-  } finally {
-    connection.release();
-  }
+  });
+
+  return {
+    success: true,
+    message: "Loan and interest schedule created successfully",
+    data: {
+      loan: {
+        bcode: result.bcode,
+        ccode: result.ccode,
+        ex_name: result.ex_name,
+        customer_code: result.customer_code,
+        loan_code: result.loan_code,
+        loan_amount: result.principal,
+        loan_date: result.formattedLoanDate,
+        due_date: result.formattedDueDate,
+        loan_period: result.period,
+      },
+      calculation: {
+        principal: result.principal,
+        total_interest: result.totalInterest,
+        total_payable: result.totalPayable,
+        weekly_payment: result.weeklyPayment,
+        weekly_capital: result.weeklyCapital,
+        weekly_interest: result.weeklyInterest,
+      },
+      schedule: result.weeklyRecords,
+    },
+  };
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -332,7 +328,7 @@ exports.insertLoanRecord = async (loanData) => {
         loan_period = VALUES(loan_period)
     `;
 
-    const [result] = await mainDb.query(query, [
+    const result = await mainDb.query(query, [
       bcode,
       ccode,
       ex_name,
@@ -375,17 +371,12 @@ exports.insertLoanInterestRecords = async (interestData) => {
   const period = parseInt(loan_period);
   const totalInterest = round2(principal * 0.3);
 
-  const connection = await mainDb.getConnection();
-
-  try {
-    await connection.beginTransaction();
-
+  const result = await mainDb.transaction(async (conn) => {
     // Delete existing interest records
-    await connection.query("DELETE FROM loan_interest WHERE loan_code = ?", [
+    await conn.query("DELETE FROM loan_interest WHERE loan_code = ?", [
       loan_code,
     ]);
 
-    // Insert new records
     const insertQuery = `
       INSERT INTO loan_interest (
         bcode, ccode, ex_name, customer_code, loan_code,
@@ -401,7 +392,6 @@ exports.insertLoanInterestRecords = async (interestData) => {
       let weekCapital = round2(principal / period);
       let weekInterest = round2(totalInterest / period);
 
-      // Adjust last week for rounding
       if (week === period) {
         weekCapital = round2(principal - cumulativeCapital);
         weekInterest = round2(totalInterest - cumulativeInterest);
@@ -413,7 +403,7 @@ exports.insertLoanInterestRecords = async (interestData) => {
       const weekPaymentAmount = round2(weekCapital + weekInterest);
       const weekDueDate = formatDate(addWeeks(loan_date, week));
 
-      const [result] = await connection.query(insertQuery, [
+      await conn.query(insertQuery, [
         bcode,
         ccode,
         ex_name,
@@ -428,7 +418,6 @@ exports.insertLoanInterestRecords = async (interestData) => {
       ]);
 
       insertedRecords.push({
-        id: result.insertId,
         week_no: week,
         week_payment: weekPaymentAmount,
         capital: weekCapital,
@@ -437,20 +426,14 @@ exports.insertLoanInterestRecords = async (interestData) => {
       });
     }
 
-    await connection.commit();
+    return insertedRecords;
+  });
 
-    return {
-      success: true,
-      message: `Inserted ${insertedRecords.length} weekly interest records`,
-      records: insertedRecords,
-    };
-  } catch (error) {
-    await connection.rollback();
-    logger.error("Error inserting loan interest records:", error);
-    throw error;
-  } finally {
-    connection.release();
-  }
+  return {
+    success: true,
+    message: `Inserted ${result.length} weekly interest records`,
+    records: result,
+  };
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -459,7 +442,7 @@ exports.insertLoanInterestRecords = async (interestData) => {
 exports.getAllLoans = async (filters = {}) => {
   const { bcode, ccode, ex_name, customer_code, month, year } = filters;
 
-  let query = `
+  let sql = `
     SELECT 
       l.*,
       (SELECT COUNT(*) FROM loan_interest li WHERE li.loan_code = l.loan_code) AS total_weeks,
@@ -472,32 +455,32 @@ exports.getAllLoans = async (filters = {}) => {
   const params = [];
 
   if (bcode) {
-    query += " AND l.bcode = ?";
+    sql += " AND l.bcode = ?";
     params.push(bcode);
   }
   if (ccode) {
-    query += " AND l.ccode = ?";
+    sql += " AND l.ccode = ?";
     params.push(ccode);
   }
   if (ex_name) {
-    query += " AND l.ex_name LIKE ?";
+    sql += " AND l.ex_name LIKE ?";
     params.push(`%${ex_name}%`);
   }
   if (customer_code) {
-    query += " AND l.customer_code = ?";
+    sql += " AND l.customer_code = ?";
     params.push(customer_code);
   }
   if (month && year) {
-    query += " AND MONTH(l.loan_date) = ? AND YEAR(l.loan_date) = ?";
+    sql += " AND MONTH(l.loan_date) = ? AND YEAR(l.loan_date) = ?";
     params.push(month, year);
   } else if (month) {
-    query += " AND DATE_FORMAT(l.loan_date, '%Y-%m') = ?";
+    sql += " AND DATE_FORMAT(l.loan_date, '%Y-%m') = ?";
     params.push(month);
   }
 
-  query += " ORDER BY l.loan_date DESC, l.id DESC";
+  sql += " ORDER BY l.loan_date DESC, l.id DESC";
 
-  const [rows] = await mainDb.query(query, params);
+  const rows = await mainDb.query(sql, params);
 
   return {
     success: true,
@@ -514,7 +497,7 @@ exports.getLoanDetails = async (loan_code) => {
     throw new Error("loan_code is required");
   }
 
-  const [loanRows] = await mainDb.query(
+  const loanRows = await mainDb.query(
     "SELECT * FROM loans WHERE loan_code = ?",
     [loan_code],
   );
@@ -530,7 +513,7 @@ exports.getLoanDetails = async (loan_code) => {
     };
   }
 
-  const [interestRows] = await mainDb.query(
+  const interestRows = await mainDb.query(
     `SELECT * FROM loan_interest 
      WHERE loan_code = ? 
      ORDER BY week_no ASC`,
@@ -582,7 +565,7 @@ exports.getLoansByCustomer = async (customer_code) => {
     throw new Error("customer_code is required");
   }
 
-  const [rows] = await mainDb.query(
+  const rows = await mainDb.query(
     `SELECT 
       l.*,
       (SELECT COALESCE(SUM(li.payments), 0) FROM loan_interest li WHERE li.loan_code = l.loan_code) AS total_paid,
@@ -608,7 +591,7 @@ exports.getLoansByBranch = async (bcode) => {
     throw new Error("bcode is required");
   }
 
-  const [rows] = await mainDb.query(
+  const rows = await mainDb.query(
     `SELECT 
       l.*,
       (SELECT COALESCE(SUM(li.payments), 0) FROM loan_interest li WHERE li.loan_code = l.loan_code) AS total_paid,
@@ -632,7 +615,7 @@ exports.getLoansByBranch = async (bcode) => {
 exports.getLoanSummary = async (filters = {}) => {
   const { bcode, month, year } = filters;
 
-  let query = `
+  let sql = `
     SELECT 
       COUNT(*) AS total_loans,
       COALESCE(SUM(loan_amount), 0) AS total_principal,
@@ -645,18 +628,18 @@ exports.getLoanSummary = async (filters = {}) => {
   const params = [];
 
   if (bcode) {
-    query += " AND bcode = ?";
+    sql += " AND bcode = ?";
     params.push(bcode);
   }
   if (month && year) {
-    query += " AND MONTH(loan_date) = ? AND YEAR(loan_date) = ?";
+    sql += " AND MONTH(loan_date) = ? AND YEAR(loan_date) = ?";
     params.push(month, year);
   } else if (month) {
-    query += " AND DATE_FORMAT(loan_date, '%Y-%m') = ?";
+    sql += " AND DATE_FORMAT(loan_date, '%Y-%m') = ?";
     params.push(month);
   }
 
-  const [rows] = await mainDb.query(query, params);
+  const rows = await mainDb.query(sql, params);
   const summary =
     Array.isArray(rows) && rows.length > 0
       ? rows[0]
@@ -667,8 +650,7 @@ exports.getLoanSummary = async (filters = {}) => {
           total_weeks: 0,
         };
 
-  // Get interest totals
-  let interestQuery = `
+  let interestSql = `
     SELECT 
       COALESCE(SUM(payments), 0) AS total_collected,
       COALESCE(SUM(week_payment), 0) AS total_due,
@@ -681,11 +663,11 @@ exports.getLoanSummary = async (filters = {}) => {
   const interestParams = [];
 
   if (bcode) {
-    interestQuery += " AND bcode = ?";
+    interestSql += " AND bcode = ?";
     interestParams.push(bcode);
   }
 
-  const [interestRows] = await mainDb.query(interestQuery, interestParams);
+  const interestRows = await mainDb.query(interestSql, interestParams);
   const interestSummary =
     Array.isArray(interestRows) && interestRows.length > 0
       ? interestRows[0]
@@ -717,36 +699,26 @@ exports.deleteLoan = async (loan_code) => {
     throw new Error("loan_code is required");
   }
 
-  const connection = await mainDb.getConnection();
-
-  try {
-    await connection.beginTransaction();
-
+  const result = await mainDb.transaction(async (conn) => {
     // Delete interest records first
-    await connection.query("DELETE FROM loan_interest WHERE loan_code = ?", [
+    await conn.query("DELETE FROM loan_interest WHERE loan_code = ?", [
       loan_code,
     ]);
 
     // Delete loan record
-    const [result] = await connection.query(
+    const deleteResult = await conn.query(
       "DELETE FROM loans WHERE loan_code = ?",
       [loan_code],
     );
 
-    await connection.commit();
+    return deleteResult;
+  });
 
-    return {
-      success: true,
-      message: "Loan and interest records deleted successfully",
-      affectedRows: result.affectedRows,
-    };
-  } catch (error) {
-    await connection.rollback();
-    logger.error("Error deleting loan:", error);
-    throw error;
-  } finally {
-    connection.release();
-  }
+  return {
+    success: true,
+    message: "Loan and interest records deleted successfully",
+    affectedRows: result?.affectedRows || 0,
+  };
 };
 
 // ── Export utilities for testing ─────────────────────────────
