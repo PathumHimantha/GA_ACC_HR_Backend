@@ -1,4 +1,4 @@
-name: Deploy Backend to Contabo
+name: Deploy ACCHR Backend to Contabo
 
 on:
   push:
@@ -22,46 +22,77 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Deploy backend to Contabo
+      - name: Deploy ACCHR backend to Contabo
         uses: appleboy/scp-action@v1
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           source: "src,package.json,package-lock.json"
-          target: "/var/www/Prod/Backend"
+          target: "/var/www/ACCHR/Backend"
           overwrite: true
 
-      - name: Restart backend with PM2
+      - name: Restart ACCHR backend with PM2
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
+
           script: |
-            cd /var/www/Prod/Backend
+            cd /var/www/ACCHR/Backend
 
-            echo "Remote PATH: $PATH"
-            which node || echo "node not found"
-            which npm || echo "npm not found"
-            which pm2 || echo "pm2 not found"
-            node -v || true
-            npm -v || true
+            echo "======================================"
+            echo "Deploying ACCHR Backend"
+            echo "======================================"
 
-            if [ ! -x "$(command -v npm)" ]; then
-              echo "npm not found — please install Node.js and npm on the server. Example:"
-              echo "  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -"
-              echo "  sudo apt-get install -y nodejs"
+            echo "Node:"
+            node -v
+
+            echo "NPM:"
+            npm -v
+
+            echo "PM2:"
+            pm2 -v || true
+
+            echo "Installing production dependencies..."
+            npm ci --omit=dev
+
+            if ! command -v pm2 >/dev/null 2>&1; then
+              echo "PM2 not found. Installing..."
+              npm install -g pm2
+            fi
+
+            echo "Checking environment..."
+            if [ ! -f .env ]; then
+              echo "ERROR: .env file not found!"
               exit 1
             fi
 
-            npm ci --omit=dev
+            echo "Starting/restarting ACCHR backend..."
 
-            if [ -x "$(command -v npm)" ] && [ ! -x "$(command -v pm2)" ]; then
-              echo "pm2 not found. Installing pm2 globally..."
-              npm install -g pm2 || true
+            if pm2 describe golden-asia-ACCHR-Backend >/dev/null 2>&1; then
+              pm2 restart golden-asia-ACCHR-Backend --update-env
+            else
+              pm2 start src/server.js \
+                --name golden-asia-ACCHR-Backend \
+                --time
             fi
 
-            pm2 restart golden-asia-backend || pm2 start src/server.js --name golden-asia-backend
-
             pm2 save
+
+            echo "======================================"
+            echo "PM2 Status"
+            echo "======================================"
+
+            pm2 status
+
+            echo "======================================"
+            echo "Port 8000"
+            echo "======================================"
+
+            ss -lntp | grep ':8000' || true
+
+            echo "======================================"
+            echo "Deployment completed"
+            echo "======================================"
