@@ -92,6 +92,11 @@ initTables();
 // MAIN FUNCTION: Calculate and Save Loan
 // ══════════════════════════════════════════════════════════════
 exports.calculateAndSaveLoan = async (data) => {
+  // Guard: check if data exists
+  if (!data || typeof data !== "object") {
+    throw new Error("No data received. Ensure request has valid JSON body.");
+  }
+
   const {
     bcode,
     ccode,
@@ -103,19 +108,22 @@ exports.calculateAndSaveLoan = async (data) => {
     loan_period,
   } = data;
 
-  // ── Validation ──────────────────────────────────────────────
-  if (
-    !bcode ||
-    !ccode ||
-    !ex_name ||
-    !customer_code ||
-    !loan_code ||
-    !loan_amount ||
-    !loan_date ||
-    !loan_period
-  ) {
+  // Collect missing fields for a helpful error message
+  const missing = [];
+  if (!bcode) missing.push("bcode");
+  if (!ccode) missing.push("ccode");
+  if (!ex_name) missing.push("ex_name");
+  if (!customer_code) missing.push("customer_code");
+  if (!loan_code) missing.push("loan_code");
+  if (!loan_amount) missing.push("loan_amount");
+  if (!loan_date) missing.push("loan_date");
+  if (!loan_period) missing.push("loan_period");
+
+  if (missing.length > 0) {
     throw new Error(
-      "All fields are required: bcode, ccode, ex_name, customer_code, loan_code, loan_amount, loan_date, loan_period",
+      `Missing required fields: ${missing.join(", ")}. ` +
+        `Received keys: [${Object.keys(data).join(", ")}]. ` +
+        `Full body: ${JSON.stringify(data)}`,
     );
   }
 
