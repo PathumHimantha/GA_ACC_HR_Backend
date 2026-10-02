@@ -28,7 +28,7 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          source: "src,package.json,package-lock.json,server.js,ecosystem.config.js,.env"
+          source: "src,package.json,package-lock.json,server.js,ecosystem.config.js"
           target: "/var/www/ACCHR/Backend"
           overwrite: true
 
@@ -64,17 +64,20 @@ jobs:
             fi
 
             echo "Checking environment..."
+
             if [ ! -f .env ]; then
               echo "ERROR: .env file not found!"
               exit 1
             fi
+
+            echo ".env found."
 
             echo "Starting/restarting ACCHR backend..."
 
             if pm2 describe golden-asia-ACCHR-Backend >/dev/null 2>&1; then
               pm2 restart golden-asia-ACCHR-Backend --update-env
             else
-              pm2 start src/server.js \
+              pm2 start server.js \
                 --name golden-asia-ACCHR-Backend \
                 --time
             fi
