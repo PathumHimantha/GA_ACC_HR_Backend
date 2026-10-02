@@ -1,0 +1,67 @@
+name: Deploy Backend to Contabo
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Deploy backend to Contabo
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          source: "src,package.json,package-lock.json"
+          target: "/var/www/Prod/Backend"
+          overwrite: true
+
+      - name: Restart backend with PM2
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            cd /var/www/Prod/Backend
+
+            echo "Remote PATH: $PATH"
+            which node || echo "node not found"
+            which npm || echo "npm not found"
+            which pm2 || echo "pm2 not found"
+            node -v || true
+            npm -v || true
+
+            if [ ! -x "$(command -v npm)" ]; then
+              echo "npm not found — please install Node.js and npm on the server. Example:"
+              echo "  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -"
+              echo "  sudo apt-get install -y nodejs"
+              exit 1
+            fi
+
+            npm ci --omit=dev
+
+            if [ -x "$(command -v npm)" ] && [ ! -x "$(command -v pm2)" ]; then
+              echo "pm2 not found. Installing pm2 globally..."
+              npm install -g pm2 || true
+            fi
+
+            pm2 restart golden-asia-backend || pm2 start src/server.js --name golden-asia-backend
+
+            pm2 save
