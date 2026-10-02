@@ -1,4 +1,5 @@
 const mainDb = require("../db/mainDb");
+const adminDb = require("../db/adminDb");
 const logger = require("../utils/logger");
 
 // ── Utility: Format date to YYYY-MM-DD ────────────────────────
@@ -30,7 +31,7 @@ const round2 = (num) => Math.round(num * 100) / 100;
 // ── CREATE TABLES IF NOT EXISTS ───────────────────────────────
 const initTables = async () => {
   try {
-    await mainDb.query(`
+    await adminDb.query(`
       CREATE TABLE IF NOT EXISTS loans (
         id INT AUTO_INCREMENT PRIMARY KEY,
         bcode VARCHAR(20) NOT NULL,
@@ -52,7 +53,7 @@ const initTables = async () => {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
-    await mainDb.query(`
+    await adminDb.query(`
       CREATE TABLE IF NOT EXISTS loan_interest (
         id INT AUTO_INCREMENT PRIMARY KEY,
         bcode VARCHAR(20) NOT NULL,
@@ -156,7 +157,7 @@ exports.calculateAndSaveLoan = async (data) => {
   );
 
   // ── Use transaction() wrapper instead of getConnection() ────
-  const result = await mainDb.transaction(async (conn) => {
+  const result = await adminDb.transaction(async (conn) => {
     // ── STEP 1: Insert into loans table ────────────────────────
     const loanInsertQuery = `
       INSERT INTO loans (
@@ -328,7 +329,7 @@ exports.insertLoanRecord = async (loanData) => {
         loan_period = VALUES(loan_period)
     `;
 
-    const result = await mainDb.query(query, [
+    const result = await adminDb.query(query, [
       bcode,
       ccode,
       ex_name,
@@ -371,7 +372,7 @@ exports.insertLoanInterestRecords = async (interestData) => {
   const period = parseInt(loan_period);
   const totalInterest = round2(principal * 0.3);
 
-  const result = await mainDb.transaction(async (conn) => {
+  const result = await adminDb.transaction(async (conn) => {
     // Delete existing interest records
     await conn.query("DELETE FROM loan_interest WHERE loan_code = ?", [
       loan_code,
@@ -480,7 +481,7 @@ exports.getAllLoans = async (filters = {}) => {
 
   sql += " ORDER BY l.loan_date DESC, l.id DESC";
 
-  const rows = await mainDb.query(sql, params);
+  const rows = await adminDb.query(sql, params);
 
   return {
     success: true,
@@ -497,7 +498,7 @@ exports.getLoanDetails = async (loan_code) => {
     throw new Error("loan_code is required");
   }
 
-  const loanRows = await mainDb.query(
+  const loanRows = await adminDb.query(
     "SELECT * FROM loans WHERE loan_code = ?",
     [loan_code],
   );
@@ -513,7 +514,7 @@ exports.getLoanDetails = async (loan_code) => {
     };
   }
 
-  const interestRows = await mainDb.query(
+  const interestRows = await adminDb.query(
     `SELECT * FROM loan_interest 
      WHERE loan_code = ? 
      ORDER BY week_no ASC`,
@@ -565,7 +566,7 @@ exports.getLoansByCustomer = async (customer_code) => {
     throw new Error("customer_code is required");
   }
 
-  const rows = await mainDb.query(
+  const rows = await adminDb.query(
     `SELECT 
       l.*,
       (SELECT COALESCE(SUM(li.payments), 0) FROM loan_interest li WHERE li.loan_code = l.loan_code) AS total_paid,
@@ -591,7 +592,7 @@ exports.getLoansByBranch = async (bcode) => {
     throw new Error("bcode is required");
   }
 
-  const rows = await mainDb.query(
+  const rows = await adminDb.query(
     `SELECT 
       l.*,
       (SELECT COALESCE(SUM(li.payments), 0) FROM loan_interest li WHERE li.loan_code = l.loan_code) AS total_paid,
@@ -639,7 +640,7 @@ exports.getLoanSummary = async (filters = {}) => {
     params.push(month);
   }
 
-  const rows = await mainDb.query(sql, params);
+  const rows = await adminDb.query(sql, params);
   const summary =
     Array.isArray(rows) && rows.length > 0
       ? rows[0]
@@ -667,7 +668,7 @@ exports.getLoanSummary = async (filters = {}) => {
     interestParams.push(bcode);
   }
 
-  const interestRows = await mainDb.query(interestSql, interestParams);
+  const interestRows = await adminDb.query(interestSql, interestParams);
   const interestSummary =
     Array.isArray(interestRows) && interestRows.length > 0
       ? interestRows[0]
@@ -699,7 +700,7 @@ exports.deleteLoan = async (loan_code) => {
     throw new Error("loan_code is required");
   }
 
-  const result = await mainDb.transaction(async (conn) => {
+  const result = await adminDb.transaction(async (conn) => {
     // Delete interest records first
     await conn.query("DELETE FROM loan_interest WHERE loan_code = ?", [
       loan_code,
