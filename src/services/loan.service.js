@@ -196,12 +196,12 @@ exports.calculateAndSaveLoan = async (data) => {
 
     // ── STEP 3: Insert weekly loan_interest records ────────────
     const interestInsertQuery = `
-      INSERT INTO loan_interest (
-        bcode, ccode, ex_name, customer_code, loan_code,
-        week_no, week_payment, capital, interest, payments, due_date
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-
+  INSERT INTO loan_interest (
+    bcode, ccode, ex_name, customer_code, loan_code,
+    week_no, week_payment, capital, interest, payments, due_date,
+    income_month, interest_payment, capital_payment
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`;
     const weeklyRecords = [];
     let cumulativeCapital = 0;
     let cumulativeInterest = 0;
@@ -221,6 +221,7 @@ exports.calculateAndSaveLoan = async (data) => {
 
       const weekPaymentAmount = round2(weekCapital + weekInterest);
       const weekDueDate = formatDate(addWeeks(loan_date, week));
+      const incomeMonth = formatIncomeMonth(weekDueDate);
 
       await conn.query(interestInsertQuery, [
         bcode,
@@ -234,6 +235,9 @@ exports.calculateAndSaveLoan = async (data) => {
         weekInterest,
         0.0,
         weekDueDate,
+        incomeMonth,
+        null,
+        null,
       ]);
 
       weeklyRecords.push({
@@ -295,7 +299,13 @@ exports.calculateAndSaveLoan = async (data) => {
     },
   };
 };
-
+// ── Utility: Extract YYYY-MM from a date ──────────────────────
+const formatIncomeMonth = (date) => {
+  const d = new Date(date);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  return `${year}-${month}`;
+};
 // ══════════════════════════════════════════════════════════════
 // HELPER FUNCTION 1: Insert Single Loan Record
 // ══════════════════════════════════════════════════════════════
@@ -381,8 +391,9 @@ exports.insertLoanInterestRecords = async (interestData) => {
     const insertQuery = `
       INSERT INTO loan_interest (
         bcode, ccode, ex_name, customer_code, loan_code,
-        week_no, week_payment, capital, interest, payments, due_date
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        week_no, week_payment, capital, interest, payments, due_date,
+        income_month, interest_payment, capital_payment
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     let cumulativeCapital = 0;
@@ -416,6 +427,9 @@ exports.insertLoanInterestRecords = async (interestData) => {
         weekInterest,
         0.0,
         weekDueDate,
+        incomeMonth,
+        null,
+        null,
       ]);
 
       insertedRecords.push({
@@ -424,6 +438,7 @@ exports.insertLoanInterestRecords = async (interestData) => {
         capital: weekCapital,
         interest: weekInterest,
         due_date: weekDueDate,
+        income_month: incomeMonth,
       });
     }
 
