@@ -32,6 +32,14 @@ const formatDate = (date) => {
 //        payment_date     = date of payment
 //        status           = 'paid' | 'partial'
 // ══════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+// INTERNAL: Process Payment Against Loan Interest Rows
+// ══════════════════════════════════════════════════════════════
+// Allocation logic per week:
+//   1. Pay INTEREST first (always)
+//   2. Then pay CAPITAL with what's left
+//   3. If payment overflows the week, carry the rest to next week
+// ══════════════════════════════════════════════════════════════
 const allocatePaymentToWeeks = async (conn, params) => {
   const {
     bcode,
@@ -71,49 +79,53 @@ const allocatePaymentToWeeks = async (conn, params) => {
   for (const week of weeks) {
     if (remaining <= 0) break;
 
-    // How much of this week is already paid?
+    // ── How much of this week is already paid? ────────────────
     const alreadyPaid = parseFloat(week.payments) || 0;
     const weekTotal = parseFloat(week.week_payment);
     const weekCapital = parseFloat(week.capital);
     const weekInterest = parseFloat(week.interest);
 
-    // How much is still owed on this week?
-    const stillOwed = round2(weekTotal - alreadyPaid);
-    if (stillOwed <= 0) continue;
-
-    // Amount to apply to this week (min of remaining and stillOwed)
-    const amountForThisWeek = round2(Math.min(remaining, stillOwed));
-
-    // Split this amount between capital & interest
-    // Proportional split based on what's left owed
     const capitalAlreadyPaid = parseFloat(week.capital_payment) || 0;
     const interestAlreadyPaid = parseFloat(week.interest_payment) || 0;
-    const capitalStillOwed = round2(weekCapital - capitalAlreadyPaid);
+
+    // ── What's still owed on this week? ───────────────────────
     const interestStillOwed = round2(weekInterest - interestAlreadyPaid);
+    const capitalStillOwed = round2(weekCapital - capitalAlreadyPaid);
+    const stillOwed = round2(interestStillOwed + capitalStillOwed);
 
-    let capitalThisTime = 0;
+    if (stillOwed <= 0) continue;
+
+    // ── RULE: Interest first, then capital ────────────────────
     let interestThisTime = 0;
+    let capitalThisTime = 0;
 
-    if (amountForThisWeek >= stillOwed) {
-      // Fully paying off the week
-      capitalThisTime = capitalStillOwed;
+    // Step 1: Pay interest first
+    if (remaining >= interestStillOwed) {
       interestThisTime = interestStillOwed;
-    } else {
-      // Partial payment - allocate proportionally based on what's still owed
-      const totalStillOwed = round2(capitalStillOwed + interestStillOwed);
-      if (totalStillOwed > 0) {
-        capitalThisTime = round2(
-          (capitalStillOwed / totalStillOwed) * amountForThisWeek,
-        );
-        interestThisTime = round2(amountForThisWeek - capitalThisTime);
+      remaining = round2(remaining - interestStillOwed);
+
+      // Step 2: Then pay capital with what's left
+      if (remaining >= capitalStillOwed) {
+        capitalThisTime = capitalStillOwed;
+        remaining = round2(remaining - capitalStillOwed);
+      } else {
+        capitalThisTime = remaining;
+        remaining = 0;
       }
+    } else {
+      // Not enough to even cover the interest — all goes to interest
+      interestThisTime = remaining;
+      remaining = 0;
     }
 
-    const newTotalPaid = round2(alreadyPaid + amountForThisWeek);
+    // ── New totals for this week ──────────────────────────────
+    const newTotalPaid = round2(
+      alreadyPaid + interestThisTime + capitalThisTime,
+    );
     const newCapitalPaid = round2(capitalAlreadyPaid + capitalThisTime);
     const newInterestPaid = round2(interestAlreadyPaid + interestThisTime);
 
-    // Determine status
+    // ── Determine status ──────────────────────────────────────
     let newStatus;
     if (newTotalPaid >= weekTotal - 0.01) {
       newStatus = "paid";
@@ -123,7 +135,7 @@ const allocatePaymentToWeeks = async (conn, params) => {
       newStatus = "pending";
     }
 
-    // ── Update the week row ────────────────────────────────────
+    // ── Update the week row ───────────────────────────────────
     await conn.query(
       `UPDATE loan_interest
        SET payments = ?,
@@ -146,15 +158,17 @@ const allocatePaymentToWeeks = async (conn, params) => {
       week_id: week.id,
       week_no: week.week_no,
       week_total: weekTotal,
-      amount_applied: amountForThisWeek,
+      week_capital: weekCapital,
+      week_interest: weekInterest,
+      amount_applied: round2(interestThisTime + capitalThisTime),
       capital_applied: capitalThisTime,
       interest_applied: interestThisTime,
       total_paid_after: newTotalPaid,
+      capital_paid_after: newCapitalPaid,
+      interest_paid_after: newInterestPaid,
       status: newStatus,
       due_date: week.due_date,
     });
-
-    remaining = round2(remaining - amountForThisWeek);
   }
 
   return {
@@ -166,7 +180,6 @@ const allocatePaymentToWeeks = async (conn, params) => {
     allocations,
   };
 };
-
 // ══════════════════════════════════════════════════════════════
 // PUBLIC: Process Single Payment
 // ══════════════════════════════════════════════════════════════
