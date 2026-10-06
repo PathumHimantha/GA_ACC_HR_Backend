@@ -149,7 +149,7 @@ exports.calculateAndSaveLoan = async (data) => {
   }
 
   const principal = parseFloat(loan_amount);
-  const period = parseInt(loan_period);
+  let period = parseInt(loan_period);
 
   if (isNaN(principal) || principal <= 0) {
     throw new Error("Invalid loan amount");
