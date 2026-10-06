@@ -178,6 +178,12 @@ exports.calculateAndSaveLoan = async (data) => {
   logger.info(
     `Calculating loan: ${loan_code} | Type: ${loanType} | Principal: ${principal} | Total: ${totalPayable} | Weekly: ${weeklyPayment} | Period: ${period}`,
   );
+  if (loanType === "Daily Loan") {
+    logger.info(
+      `Daily loan detected for ccode ${ccode} — overriding period from ${period} to 65`,
+    );
+    period = 65;
+  }
 
   const result = await adminDb.transaction(async (conn) => {
     // ── STEP 1: Insert into loans table ────────────────────────
