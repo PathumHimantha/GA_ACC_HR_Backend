@@ -9,14 +9,6 @@ router.post(
   (req, res, next) => {
     console.log("=== LOAN ROUTE HIT ===");
     console.log("Timestamp:", new Date().toISOString());
-    console.log("Method:", req.method);
-    console.log("URL:", req.originalUrl);
-    console.log("Headers:", JSON.stringify(req.headers, null, 2));
-    console.log("Body:", JSON.stringify(req.body, null, 2));
-    console.log("Body Type:", typeof req.body);
-    console.log("Body Keys:", Object.keys(req.body || {}));
-    console.log("Query:", JSON.stringify(req.query, null, 2));
-    console.log("Params:", JSON.stringify(req.params, null, 2));
     console.log("======================");
     next();
   },

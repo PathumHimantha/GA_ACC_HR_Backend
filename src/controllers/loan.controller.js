@@ -28,7 +28,9 @@ exports.calculateAndSaveLoan = asyncHandler(async (req, res) => {
 });
 
 exports.getAllLoans = asyncHandler(async (req, res) => {
-  const { bcode, ccode, ex_name, customer_code, month, year } = req.query;
+  const { bcode, ccode, ex_name, customer_code, month, year, loan_type } =
+    req.query;
+
   const result = await loanService.getAllLoans({
     bcode,
     ccode,
@@ -36,6 +38,7 @@ exports.getAllLoans = asyncHandler(async (req, res) => {
     customer_code,
     month,
     year,
+    loan_type,
   });
   res.json(result);
 });

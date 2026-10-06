@@ -27,58 +27,78 @@ const addDays = (date, days) => {
 
 // ── Utility: Round to 2 decimals ──────────────────────────────
 const round2 = (num) => Math.round(num * 100) / 100;
-
+// ── Utility: Determine loan type from ccode ───────────────────
+//   0-299    → Consumer Loan
+//   300-799  → Business Loan
+//   800+     → Daily Loan
+const getLoanType = (ccode) => {
+  const code = parseInt(ccode, 10);
+  if (isNaN(code)) return "Consumer Loan";
+  if (code >= 0 && code <= 299) return "Consumer Loan";
+  if (code >= 300 && code <= 799) return "Business Loan";
+  return "Daily Loan";
+};
 // ── CREATE TABLES IF NOT EXISTS ───────────────────────────────
 const initTables = async () => {
   try {
     await adminDb.query(`
-      CREATE TABLE IF NOT EXISTS loans (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        bcode VARCHAR(20) NOT NULL,
-        ccode VARCHAR(20) NOT NULL,
-        ex_name VARCHAR(100) NOT NULL,
-        customer_code VARCHAR(50) NOT NULL,
-        loan_code VARCHAR(50) NOT NULL UNIQUE,
-        loan_amount DECIMAL(12,2) NOT NULL,
-        loan_date DATE NOT NULL,
-        due_date DATE NOT NULL,
-        loan_period INT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        INDEX idx_bcode (bcode),
-        INDEX idx_ccode (ccode),
-        INDEX idx_customer_code (customer_code),
-        INDEX idx_loan_code (loan_code),
-        INDEX idx_loan_date (loan_date)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    `);
+  CREATE TABLE IF NOT EXISTS loans (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    bcode VARCHAR(20) NOT NULL,
+    ccode VARCHAR(20) NOT NULL,
+    ex_name VARCHAR(100) NOT NULL,
+    customer_code VARCHAR(50) NOT NULL,
+    loan_code VARCHAR(50) NOT NULL UNIQUE,
+    loan_amount DECIMAL(12,2) NOT NULL,
+    loan_date DATE NOT NULL,
+    due_date DATE NOT NULL,
+    loan_period INT NOT NULL,
+    loan_type ENUM('Consumer Loan','Business Loan','Daily Loan') NOT NULL DEFAULT 'Consumer Loan',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_bcode (bcode),
+    INDEX idx_ccode (ccode),
+    INDEX idx_customer_code (customer_code),
+    INDEX idx_loan_code (loan_code),
+    INDEX idx_loan_date (loan_date),
+    INDEX idx_loan_type (loan_type)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+`);
 
     await adminDb.query(`
-      CREATE TABLE IF NOT EXISTS loan_interest (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        bcode VARCHAR(20) NOT NULL,
-        ccode VARCHAR(20) NOT NULL,
-        ex_name VARCHAR(100) NOT NULL,
-        customer_code VARCHAR(50) NOT NULL,
-        loan_code VARCHAR(50) NOT NULL,
-        week_no INT NOT NULL,
-        week_payment DECIMAL(12,2) NOT NULL,
-        capital DECIMAL(12,2) NOT NULL,
-        interest DECIMAL(12,2) NOT NULL,
-        payments DECIMAL(12,2) DEFAULT 0.00,
-        payment_date DATE DEFAULT NULL,
-        due_date DATE NOT NULL,
-        status ENUM('pending','paid','partial','overdue') DEFAULT 'pending',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        INDEX idx_loan_code (loan_code),
-        INDEX idx_customer_code (customer_code),
-        INDEX idx_bcode (bcode),
-        INDEX idx_due_date (due_date),
-        INDEX idx_status (status),
-        UNIQUE KEY unique_loan_week (loan_code, week_no)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    `);
+  CREATE TABLE IF NOT EXISTS loan_interest (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    bcode VARCHAR(20) NOT NULL,
+    ccode VARCHAR(20) NOT NULL,
+    ex_name VARCHAR(100) NOT NULL,
+    customer_code VARCHAR(50) NOT NULL,
+    loan_code VARCHAR(50) NOT NULL,
+    week_no INT NOT NULL,
+    week_payment DECIMAL(12,2) NOT NULL,
+    capital DECIMAL(12,2) NOT NULL,
+    interest DECIMAL(12,2) NOT NULL,
+    payments DECIMAL(12,2) DEFAULT 0.00,
+    payment_date DATE DEFAULT NULL,
+    due_date DATE NOT NULL,
+    income_month VARCHAR(7) DEFAULT NULL,
+    capital_payment DECIMAL(12,2) DEFAULT NULL,
+    interest_payment DECIMAL(12,2) DEFAULT NULL,
+    status ENUM('pending','paid','partial','overdue') DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_loan_code (loan_code),
+    INDEX idx_customer_code (customer_code),
+    INDEX idx_bcode (bcode),
+    INDEX idx_due_date (due_date),
+    INDEX idx_status (status),
+    INDEX idx_income_month (income_month),
+    UNIQUE KEY unique_loan_week (loan_code, week_no),
+    CONSTRAINT fk_loan_interest_loan_code
+      FOREIGN KEY (loan_code) REFERENCES loans(loan_code)
+      ON UPDATE CASCADE
+      ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+`);
 
     logger.info("Loan tables initialized successfully");
   } catch (error) {
@@ -152,28 +172,31 @@ exports.calculateAndSaveLoan = async (data) => {
   const formattedDueDate = formatDate(dueDate);
   const formattedLoanDate = formatDate(loan_date);
 
+  // ── Determine loan type ────────────────────────────────────
+  const loanType = getLoanType(ccode);
+
   logger.info(
-    `Calculating loan: ${loan_code} | Principal: ${principal} | Total: ${totalPayable} | Weekly: ${weeklyPayment} | Period: ${period}`,
+    `Calculating loan: ${loan_code} | Type: ${loanType} | Principal: ${principal} | Total: ${totalPayable} | Weekly: ${weeklyPayment} | Period: ${period}`,
   );
 
-  // ── Use transaction() wrapper instead of getConnection() ────
   const result = await adminDb.transaction(async (conn) => {
     // ── STEP 1: Insert into loans table ────────────────────────
     const loanInsertQuery = `
-      INSERT INTO loans (
-        bcode, ccode, ex_name, customer_code, loan_code,
-        loan_amount, loan_date, due_date, loan_period
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON DUPLICATE KEY UPDATE
-        bcode = VALUES(bcode),
-        ccode = VALUES(ccode),
-        ex_name = VALUES(ex_name),
-        customer_code = VALUES(customer_code),
-        loan_amount = VALUES(loan_amount),
-        loan_date = VALUES(loan_date),
-        due_date = VALUES(due_date),
-        loan_period = VALUES(loan_period)
-    `;
+    INSERT INTO loans (
+      bcode, ccode, ex_name, customer_code, loan_code,
+      loan_amount, loan_date, due_date, loan_period, loan_type
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON DUPLICATE KEY UPDATE
+      bcode = VALUES(bcode),
+      ccode = VALUES(ccode),
+      ex_name = VALUES(ex_name),
+      customer_code = VALUES(customer_code),
+      loan_amount = VALUES(loan_amount),
+      loan_date = VALUES(loan_date),
+      due_date = VALUES(due_date),
+      loan_period = VALUES(loan_period),
+      loan_type = VALUES(loan_type)
+  `;
 
     await conn.query(loanInsertQuery, [
       bcode,
@@ -185,8 +208,10 @@ exports.calculateAndSaveLoan = async (data) => {
       formattedLoanDate,
       formattedDueDate,
       period,
+      loanType,
     ]);
 
+    // ... (the rest stays the same — delete, then insert interest records)
     logger.info(`Loan record inserted: ${loan_code}`);
 
     // ── STEP 2: Delete existing interest records for this loan ─
@@ -322,12 +347,14 @@ exports.insertLoanRecord = async (loanData) => {
     loan_period,
   } = loanData;
 
+  const loanType = getLoanType(ccode);
+
   try {
     const query = `
       INSERT INTO loans (
         bcode, ccode, ex_name, customer_code, loan_code,
-        loan_amount, loan_date, due_date, loan_period
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        loan_amount, loan_date, due_date, loan_period, loan_type
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
         bcode = VALUES(bcode),
         ccode = VALUES(ccode),
@@ -336,7 +363,8 @@ exports.insertLoanRecord = async (loanData) => {
         loan_amount = VALUES(loan_amount),
         loan_date = VALUES(loan_date),
         due_date = VALUES(due_date),
-        loan_period = VALUES(loan_period)
+        loan_period = VALUES(loan_period),
+        loan_type = VALUES(loan_type)
     `;
 
     const result = await adminDb.query(query, [
@@ -349,11 +377,13 @@ exports.insertLoanRecord = async (loanData) => {
       formatDate(loan_date),
       formatDate(due_date),
       loan_period,
+      loanType,
     ]);
 
     return {
       success: true,
       message: "Loan record inserted successfully",
+      loan_type: loanType,
       insertId: result.insertId,
       affectedRows: result.affectedRows,
     };
@@ -456,7 +486,8 @@ exports.insertLoanInterestRecords = async (interestData) => {
 // GET: All Loans with Filters
 // ══════════════════════════════════════════════════════════════
 exports.getAllLoans = async (filters = {}) => {
-  const { bcode, ccode, ex_name, customer_code, month, year } = filters;
+  const { bcode, ccode, ex_name, customer_code, month, year, loan_type } =
+    filters;
 
   let sql = `
     SELECT 
@@ -485,6 +516,10 @@ exports.getAllLoans = async (filters = {}) => {
   if (customer_code) {
     sql += " AND l.customer_code = ?";
     params.push(customer_code);
+  }
+  if (loan_type) {
+    sql += " AND l.loan_type = ?";
+    params.push(loan_type);
   }
   if (month && year) {
     sql += " AND MONTH(l.loan_date) = ? AND YEAR(l.loan_date) = ?";
