@@ -11,7 +11,8 @@ app.use(cors());
 app.use(express.json());
 app.use(requestLogger);
 
-app.get("/health", async (req, res) => {
+// Health under /api so nginx mapping is 1:1
+app.get("/api/health", async (req, res) => {
   const dbStatus = await checkAllConnections();
   const allOk = dbStatus.every((db) => db.ok);
   res.status(allOk ? 200 : 503).json({ ok: allOk, databases: dbStatus });
@@ -20,7 +21,7 @@ app.get("/health", async (req, res) => {
 app.use("/api", routes);
 
 app.use((req, res) => {
-  res.status(404).json({ error: "Not found" });
+  res.status(404).json({ error: "Not found", path: req.originalUrl });
 });
 
 app.use(errorHandler);
