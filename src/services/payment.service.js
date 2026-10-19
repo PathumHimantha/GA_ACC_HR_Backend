@@ -375,7 +375,7 @@ exports.processBulkPayment = async (payments) => {
 };
 
 // ══════════════════════════════════════════════════════════════
-// PUBLIC: Get Payment History
+// PUBLIC: Get Payment History T
 // ══════════════════════════════════════════════════════════════
 exports.getPaymentHistory = async (loan_code) => {
   if (!loan_code) {
