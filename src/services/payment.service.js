@@ -404,7 +404,7 @@ exports.getPaymentHistory = async (loan_code) => {
 };
 
 // ══════════════════════════════════════════════════════════════
-// PUBLIC: Get Payment Summary
+// PUBLIC: Get Payment Summary T
 // ══════════════════════════════════════════════════════════════
 exports.getPaymentSummary = async (loan_code) => {
   if (!loan_code) {
